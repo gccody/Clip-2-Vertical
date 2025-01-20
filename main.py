@@ -1,6 +1,8 @@
 import os
 import argparse
 from pathlib import Path
+import subprocess
+import sys
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
@@ -34,7 +36,7 @@ class VideoProcessor:
         
         # Process background (blur)
         bg_frame = cv2.resize(frame, (bg_width, bg_height), interpolation=cv2.INTER_LINEAR)
-        bg_frame = cv2.GaussianBlur(bg_frame, (self.blur_size, self.blur_size), 0)
+        bg_frame = cv2.stackBlur(bg_frame, (self.blur_size, self.blur_size), 0)
         
         # Create canvas and calculate offsets
         canvas = np.zeros((target_height, target_width, 3), dtype=np.uint8)
@@ -152,24 +154,29 @@ class VideoProcessor:
 
     @staticmethod
     def merge_audio(input_path: Path, processed_path: Path, output_path: Path):
-        original = VideoFileClip(str(input_path))
-        if original.audio is None:
-          print("No audio in original clip")
-          return
-        processed = VideoFileClip(str(processed_path))
-        
-        processed.audio = original.audio
-        
-        processed.write_videofile(
-            str(output_path),
-            codec='libx264',
-            audio_codec='aac',
-            temp_audiofile='temp-audio.m4a',
-            remove_temp=True
-        )
-        
-        original.close()
-        processed.close()
+        print("Adding audio...")
+        # Use ffmpeg to merge audio from the original file with the processed video
+        cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output without asking
+            "-hide_banner",  # Suppress banner info
+            "-loglevel", "error",  # Suppress verbose logs
+            "-i", str(processed_path),  # Processed video (no audio)
+            "-i", str(input_path),  # Original video (with audio)
+            "-c:v", "copy",  # Copy the video stream without re-encoding
+            "-c:a", "aac",  # Re-encode the audio to AAC for compatibility
+            "-map", "0:v:0",  # Take video stream from processed video
+            "-map", "1:a:0",  # Take audio stream from the original video
+            "-shortest",  # Ensure output matches the shortest stream duration
+            str(output_path),  # Output file
+        ]
+
+        # Execute the command
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if process.returncode != 0:
+            print(f"Error while merging audio: {process.stderr.decode().strip()}")
+        else:
+            print(f"Audio added successfully to {output_path}")
 
 def process_single_file(input_path: Path, processor: VideoProcessor):
     """Process a single video file"""
